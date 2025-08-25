@@ -1,64 +1,94 @@
--- Full Inventory & Melee Checker
+-- 🍓 Blox Fruits Stats Sender to Localhost
+-- Script gửi thông tin player stats lên trackstats server
+
 local Player = game.Players.LocalPlayer
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 local CommF = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
 
-print("=== Script Started ===")
+-- Config
+local SERVER_URL = "http://localhost:5000/api/bloxfruits/stats"
+local SEND_INTERVAL = 30 -- Gửi data mỗi 30 giây
+local DEBUG_MODE = true
 
--- Check Level, Beli, Fragments
-local data = Player:FindFirstChild("Data")
-if data then
-    print("Level:", data.Level.Value)
-    print("Beli:", data.Beli.Value)
-    print("Fragments:", data.Fragments.Value)
-else
-    warn("❌ Không tìm thấy Data của player")
+-- Utility function để debug
+local function debugPrint(message)
+    if DEBUG_MODE then
+        print("🍓 [Stats Sender] " .. tostring(message))
+    end
 end
 
--- Sword / Gun Checker
-local function checkWeapons()
-    local success, inventory = pcall(function()
-        -- Có thể là "getInventory" thay vì "getInventoryWeapons"
-        return CommF:InvokeServer("getInventoryWeapons") 
-    end)
-
-    if not success or not inventory then
-        warn("❌ Không lấy được inventory weapons (có thể remote đổi tên)")
-        return
-    end
-
-    print("=== Weapons Found ===")
-    for _, item in ipairs(inventory) do
-        local name = item.Name or "Unknown"
-        if item.Type == "Sword" then
-            print("⚔️ Sword:", name)
-        elseif item.Type == "Gun" then
-            print("🔫 Gun:", name)
-        else
-            print("❓ Unknown:", name, item.Type)
+-- Function lấy thông tin cơ bản của player
+local function getPlayerStats()
+    debugPrint("Getting player stats...")
+    
+    local stats = {
+        player_name = Player.Name,
+        user_id = Player.UserId,
+        level = 0,
+        beli = 0,
+        fragments = 0,
+        bounty = 0,
+        honor = 0,
+        equipped_fruit = nil,
+        fighting_style = nil
+    }
+    
+    -- Lấy data từ Player.Data
+    local data = Player:FindFirstChild("Data")
+    if data then
+        if data:FindFirstChild("Level") then
+            stats.level = data.Level.Value
+        end
+        if data:FindFirstChild("Beli") then
+            stats.beli = data.Beli.Value
+        end
+        if data:FindFirstChild("Fragments") then
+            stats.fragments = data.Fragments.Value
+        end
+        if data:FindFirstChild("Bounty") then
+            stats.bounty = data.Bounty.Value
+        end
+        if data:FindFirstChild("Honor") then
+            stats.honor = data.Honor.Value
+        end
+        if data:FindFirstChild("DevilFruit") then
+            stats.equipped_fruit = data.DevilFruit.Value
         end
     end
+    
+    -- Lấy fighting style hiện tại
+    local success, currentStyle = pcall(function()
+        return CommF:InvokeServer("GetCurrentStyle")
+    end)
+    if success and currentStyle then
+        stats.fighting_style = currentStyle
+    end
+    
+    debugPrint("Stats collected: Level " .. stats.level .. ", Beli " .. stats.beli)
+    return stats
 end
 
--- Melee Checker
-local alias = {
-    Combat           = {}, -- mặc định có
-    DarkStep         = {"BuyBlackLeg", "BlackLeg"},
-    Electro          = {"BuyElectro", "Electro"},
-    WaterKungFu      = {"BuyFishmanKarate", "FishmanKarate"},
-    DragonBreath     = {"BuyDragonBreath", "DragonBreath"},
-    Superhuman       = {"BuySuperhuman", "Superhuman"},
-    DeathStep        = {"BuyDeathStep", "DeathStep"},
-    SharkmanKarate   = {"BuySharkmanKarate", "SharkmanKarate"},
-    ElectricClaw     = {"BuyElectricClaw", "ElectricClaw"},
-    DragonTalon      = {"BuyDragonTalon", "DragonTalon"},
-    Godhuman         = {"BuyGodhuman", "Godhuman"},
-}
-
-local function checkMelee()
-    print("=== Checking Melee ===")
-    print("✅ Owned Fighting Style: Combat (default)")
-
+-- Function check fighting styles owned
+local function getFightingStyles()
+    debugPrint("Checking fighting styles...")
+    
+    local alias = {
+        Combat           = {}, -- mặc định có
+        DarkStep         = {"BuyBlackLeg", "BlackLeg"},
+        Electro          = {"BuyElectro", "Electro"},
+        WaterKungFu      = {"BuyFishmanKarate", "FishmanKarate"},
+        DragonBreath     = {"BuyDragonBreath", "DragonBreath"},
+        Superhuman       = {"BuySuperhuman", "Superhuman"},
+        DeathStep        = {"BuyDeathStep", "DeathStep"},
+        SharkmanKarate   = {"BuySharkmanKarate", "SharkmanKarate"},
+        ElectricClaw     = {"BuyElectricClaw", "ElectricClaw"},
+        DragonTalon      = {"BuyDragonTalon", "DragonTalon"},
+        Godhuman         = {"BuyGodhuman", "Godhuman"},
+    }
+    
+    local ownedStyles = {"Combat"} -- Combat luôn có
+    
     for style, remotes in pairs(alias) do
         if style ~= "Combat" then
             local owned = false
@@ -71,18 +101,226 @@ local function checkMelee()
                     break
                 end
             end
-
+            
             if owned then
-                print("✅ Owned Fighting Style:", style)
-            else
-                print("❌ Not owned:", style)
+                table.insert(ownedStyles, style)
+                debugPrint("Found owned style: " .. style)
             end
         end
     end
+    
+    return {owned = ownedStyles}
 end
 
--- RUN
-checkWeapons()
-checkMelee()
+-- Function check weapons/items
+local function getPlayerItems()
+    debugPrint("Checking weapons...")
+    
+    local items = {
+        swords = {},
+        guns = {},
+        fruits = {}
+    }
+    
+    -- Lấy weapons từ inventory
+    local success, inventory = pcall(function()
+        return CommF:InvokeServer("getInventoryWeapons") 
+    end)
+    
+    if success and inventory then
+        for _, item in ipairs(inventory) do
+            local name = item.Name or "Unknown"
+            if item.Type == "Sword" then
+                table.insert(items.swords, name)
+                debugPrint("Found sword: " .. name)
+            elseif item.Type == "Gun" then
+                table.insert(items.guns, name)
+                debugPrint("Found gun: " .. name)
+            end
+        end
+    else
+        debugPrint("Failed to get inventory weapons")
+    end
+    
+    -- Lấy fruits từ inventory (nếu có)
+    local fruitSuccess, fruitInventory = pcall(function()
+        return CommF:InvokeServer("getInventoryFruits")
+    end)
+    
+    if fruitSuccess and fruitInventory then
+        for _, fruit in ipairs(fruitInventory) do
+            table.insert(items.fruits, fruit.Name)
+            debugPrint("Found fruit: " .. fruit.Name)
+        end
+    end
+    
+    return items
+end
 
-print("=== Script End ===")
+-- Function gửi data lên server
+local function sendDataToServer(playerStats, fightingStyles, items)
+    debugPrint("Sending data to server...")
+    
+    local payload = {
+        -- Basic stats
+        player_name = playerStats.player_name,
+        user_id = playerStats.user_id,
+        level = playerStats.level,
+        beli = playerStats.beli,
+        fragments = playerStats.fragments,
+        bounty = playerStats.bounty,
+        honor = playerStats.honor,
+        equipped_fruit = playerStats.equipped_fruit,
+        fighting_style = playerStats.fighting_style,
+        
+        -- Additional data
+        fighting_styles = fightingStyles,
+        items = items,
+        
+        -- Session info
+        session_id = game.JobId,
+        timestamp = os.time(),
+        server_info = {
+            place_id = game.PlaceId,
+            job_id = game.JobId,
+            players_count = #game.Players:GetPlayers()
+        }
+    }
+    
+    local jsonData = HttpService:JSONEncode(payload)
+    
+    -- Gửi request (sử dụng http của executor)
+    local success, response = pcall(function()
+        -- Thay đổi phương thức HTTP này theo executor bạn sử dụng
+        -- Ví dụ cho một số executor phổ biến:
+        
+        -- Cho Synapse X:
+        -- return syn.request({
+        --     Url = SERVER_URL,
+        --     Method = "POST",
+        --     Headers = {["Content-Type"] = "application/json"},
+        --     Body = jsonData
+        -- })
+        
+        -- Cho Krnl/Delta:
+        -- return http.request({
+        --     Url = SERVER_URL,
+        --     Method = "POST",
+        --     Headers = {["Content-Type"] = "application/json"},
+        --     Body = jsonData
+        -- })
+        
+        -- Cho Script-Ware:
+        -- return http_request({
+        --     Url = SERVER_URL,
+        --     Method = "POST",
+        --     Headers = {["Content-Type"] = "application/json"},
+        --     Body = jsonData
+        -- })
+        
+        -- Generic approach - thay đổi theo executor của bạn
+        if syn and syn.request then
+            return syn.request({
+                Url = SERVER_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = jsonData
+            })
+        elseif http_request then
+            return http_request({
+                Url = SERVER_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = jsonData
+            })
+        elseif http and http.request then
+            return http.request({
+                Url = SERVER_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = jsonData
+            })
+        else
+            error("No HTTP function found. Please update the script for your executor.")
+        end
+    end)
+    
+    if success and response then
+        if response.StatusCode == 200 then
+            debugPrint("✅ Data sent successfully!")
+            local responseData = HttpService:JSONDecode(response.Body)
+            debugPrint("Server response: " .. (responseData.message or "OK"))
+        else
+            debugPrint("❌ Server returned error: " .. response.StatusCode)
+        end
+    else
+        debugPrint("❌ Failed to send data: " .. tostring(response))
+    end
+end
+
+-- Main function để collect và gửi data
+local function collectAndSendData()
+    debugPrint("=== Collecting Blox Fruits Data ===")
+    
+    local playerStats = getPlayerStats()
+    local fightingStyles = getFightingStyles()
+    local items = getPlayerItems()
+    
+    debugPrint("Data collection complete. Sending to server...")
+    sendDataToServer(playerStats, fightingStyles, items)
+    
+    debugPrint("=== Data Collection Cycle Complete ===")
+end
+
+-- Auto-send function
+local function startAutoSender()
+    debugPrint("🚀 Starting Blox Fruits Stats Auto-Sender")
+    debugPrint("📡 Server URL: " .. SERVER_URL)
+    debugPrint("⏱️ Send Interval: " .. SEND_INTERVAL .. " seconds")
+    debugPrint("🎮 Player: " .. Player.Name .. " (ID: " .. Player.UserId .. ")")
+    
+    -- Gửi data lần đầu
+    collectAndSendData()
+    
+    -- Thiết lập gửi định kỳ
+    spawn(function()
+        while true do
+            wait(SEND_INTERVAL)
+            collectAndSendData()
+        end
+    end)
+    
+    debugPrint("✅ Auto-sender started successfully!")
+    print("🍓 Blox Fruits Stats Tracker đang chạy!")
+    print("💡 Dữ liệu sẽ được gửi mỗi " .. SEND_INTERVAL .. " giây")
+    print("🌐 Check dashboard tại: http://localhost:5000")
+end
+
+-- Khởi chạy
+startAutoSender()
+
+-- Event khi player leave để gửi data cuối
+game.Players.PlayerRemoving:Connect(function(player)
+    if player == Player then
+        debugPrint("Player leaving, sending final data...")
+        collectAndSendData()
+    end
+end)
+
+-- Commands để test thủ công
+_G.BloxFruitsTracker = {
+    sendNow = collectAndSendData,
+    toggleDebug = function()
+        DEBUG_MODE = not DEBUG_MODE
+        debugPrint("Debug mode: " .. (DEBUG_MODE and "ON" or "OFF"))
+    end,
+    setInterval = function(seconds)
+        SEND_INTERVAL = seconds
+        debugPrint("Interval changed to: " .. seconds .. " seconds")
+    end
+}
+
+print("🍓 Commands available:")
+print("   _G.BloxFruitsTracker.sendNow() - Gửi data ngay")
+print("   _G.BloxFruitsTracker.toggleDebug() - Bật/tắt debug")
+print("   _G.BloxFruitsTracker.setInterval(seconds) - Đổi thời gian gửi")
