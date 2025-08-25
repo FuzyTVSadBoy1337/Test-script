@@ -1,0 +1,88 @@
+-- Full Inventory & Melee Checker
+local Player = game.Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CommF = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
+
+print("=== Script Started ===")
+
+-- Check Level, Beli, Fragments
+local data = Player:FindFirstChild("Data")
+if data then
+    print("Level:", data.Level.Value)
+    print("Beli:", data.Beli.Value)
+    print("Fragments:", data.Fragments.Value)
+else
+    warn("❌ Không tìm thấy Data của player")
+end
+
+-- Sword / Gun Checker
+local function checkWeapons()
+    local success, inventory = pcall(function()
+        -- Có thể là "getInventory" thay vì "getInventoryWeapons"
+        return CommF:InvokeServer("getInventoryWeapons") 
+    end)
+
+    if not success or not inventory then
+        warn("❌ Không lấy được inventory weapons (có thể remote đổi tên)")
+        return
+    end
+
+    print("=== Weapons Found ===")
+    for _, item in ipairs(inventory) do
+        local name = item.Name or "Unknown"
+        if item.Type == "Sword" then
+            print("⚔️ Sword:", name)
+        elseif item.Type == "Gun" then
+            print("🔫 Gun:", name)
+        else
+            print("❓ Unknown:", name, item.Type)
+        end
+    end
+end
+
+-- Melee Checker
+local alias = {
+    Combat           = {}, -- mặc định có
+    DarkStep         = {"BuyBlackLeg", "BlackLeg"},
+    Electro          = {"BuyElectro", "Electro"},
+    WaterKungFu      = {"BuyFishmanKarate", "FishmanKarate"},
+    DragonBreath     = {"BuyDragonBreath", "DragonBreath"},
+    Superhuman       = {"BuySuperhuman", "Superhuman"},
+    DeathStep        = {"BuyDeathStep", "DeathStep"},
+    SharkmanKarate   = {"BuySharkmanKarate", "SharkmanKarate"},
+    ElectricClaw     = {"BuyElectricClaw", "ElectricClaw"},
+    DragonTalon      = {"BuyDragonTalon", "DragonTalon"},
+    Godhuman         = {"BuyGodhuman", "Godhuman"},
+}
+
+local function checkMelee()
+    print("=== Checking Melee ===")
+    print("✅ Owned Fighting Style: Combat (default)")
+
+    for style, remotes in pairs(alias) do
+        if style ~= "Combat" then
+            local owned = false
+            for _, remoteName in ipairs(remotes) do
+                local ok, result = pcall(function()
+                    return CommF:InvokeServer(remoteName, true)
+                end)
+                if ok and result == 1 then
+                    owned = true
+                    break
+                end
+            end
+
+            if owned then
+                print("✅ Owned Fighting Style:", style)
+            else
+                print("❌ Not owned:", style)
+            end
+        end
+    end
+end
+
+-- RUN
+checkWeapons()
+checkMelee()
+
+print("=== Script End ===")
